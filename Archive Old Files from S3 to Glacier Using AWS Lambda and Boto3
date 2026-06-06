@@ -1,0 +1,76 @@
+import boto3
+from datetime import datetime, timezone, timedelta
+
+s3 = boto3.client('s3')
+
+BUCKET_NAME = 'demobucket060701'
+
+
+def lambda_handler(event, context):
+
+    archived_files = []
+
+    try:
+        # Files older than 6 months (approximately 180 days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
+
+        response = s3.list_objects_v2(
+            Bucket=BUCKET_NAME
+        )
+
+        if 'Contents' not in response:
+            print("Bucket is empty.")
+
+            return {
+                'statusCode': 200,
+                'message': 'Bucket is empty',
+                'archived_files': []
+            }
+
+        for obj in response['Contents']:
+
+            file_name = obj['Key']
+            last_modified = obj['LastModified']
+
+            print(
+                f"Checking file: {file_name} | "
+                f"Last Modified: {last_modified}"
+            )
+
+            # Skip files already archived
+            if obj.get('StorageClass') == 'GLACIER':
+                continue
+
+            if last_modified < cutoff_date:
+
+                s3.copy_object(
+                    Bucket=BUCKET_NAME,
+                    Key=file_name,
+                    CopySource={
+                        'Bucket': BUCKET_NAME,
+                        'Key': file_name
+                    },
+                    StorageClass='GLACIER',
+                    MetadataDirective='COPY'
+                )
+
+                archived_files.append(file_name)
+
+                print(
+                    f"Archived to Glacier: {file_name}"
+                )
+
+        return {
+            'statusCode': 200,
+            'message': 'Archival process completed',
+            'archived_files': archived_files
+        }
+
+    except Exception as e:
+
+        print(f"Error: {str(e)}")
+
+        return {
+            'statusCode': 500,
+            'error': str(e)
+        }
